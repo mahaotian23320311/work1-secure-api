@@ -1,0 +1,82 @@
+﻿
+==============================================================================
+1. GET /api/data without a token -> must be 401
+==============================================================================
+$ curl -s -i http://127.0.0.1:5001/api/data
+HTTP/1.1 401 UNAUTHORIZED
+Server: Werkzeug/3.1.9 Python/3.11.5
+Date: Tue, 20 Oct 2026 04:40:26 GMT
+Content-Type: application/json
+Content-Length: 75
+WWW-Authenticate: Bearer realm="api"
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'
+Cache-Control: no-store
+Connection: close
+
+{"error":{"code":"missing_token","message":"A Bearer token is required."}}
+
+==============================================================================
+2. POST /auth/login with valid credentials -> JWT
+==============================================================================
+$ curl -s -X POST http://127.0.0.1:5001/auth/login -H Content-Type:application/json --data-binary @login.json
+{"access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJhbGljZSIsInJvbGUiOiJhZG1pbiIsImlzcyI6InNlY3VyZS1ub3Rlcy1hcGkiLCJpYXQiOjE3OTI0NzEyMjcsIm5iZiI6MTc5MjQ3MTIyNywiZXhwIjoxNzkyNDczMDI3LCJqdGkiOiI3MTJlNzRmYzJhMzU0Y2I1YjU1M2ZiYzlkZDZjM2QyNCJ9.C3B8nE-pFWkZUJdE8XZsP__izz9J5wgWz44g2vOhwqw","expires_in":1800,"token_type":"Bearer"}
+token (first 40 chars): eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ...
+
+==============================================================================
+3. POST /auth/login with a wrong password -> must be 401
+==============================================================================
+$ curl -s -X POST http://127.0.0.1:5001/auth/login --data-binary @wrong.json
+{"error":{"code":"invalid_credentials","message":"Invalid username or password."}}
+
+HTTP 401
+
+==============================================================================
+4. GET /api/data with the token -> 200 + data
+==============================================================================
+$ curl -s -H Authorization:Bearer_<token> http://127.0.0.1:5001/api/data
+{"count":4,"items":[{"author":"alice","body":"This post is visible to every authenticated user.","created_at":"2026-10-20T04:39:41+00:00","id":1,"title":"Welcome to the secure notes API"},{"author":"alice","body":"Values are bound as parameters; they are never parsed as SQL.","created_at":"2026-10-20T04:39:41+00:00","id":2,"title":"SQL injection is a data/query mixing bug"},{"author":"bob","body":"User supplied HTML is escaped on the way out of the API.","created_at":"2026-10-20T04:39:41+00:00","id":3,"title":"Escaping belongs at the trust boundary"},{"author":"alice","body":"&lt;img src=x onerror=alert(2)&gt;","created_at":"2026-10-20T04:40:05+00:00","id":4,"title":"&lt;script&gt;alert(1)&lt;/script&gt;"}]}
+
+==============================================================================
+5. GET /api/me with the token
+==============================================================================
+$ curl -s -H Authorization:Bearer_<token> http://127.0.0.1:5001/api/me
+{"id":1,"role":"admin","username":"alice"}
+
+==============================================================================
+6. SQL injection attempt in ?search= -> 200, zero rows, no error
+==============================================================================
+$ curl -s -H Authorization:Bearer_<token> http://127.0.0.1:5001/api/data?search=OR-1-1
+{"count":0,"items":[]}
+
+==============================================================================
+7. Store an XSS payload and read it back -> escaped
+==============================================================================
+$ curl -s -X POST http://127.0.0.1:5001/api/notes --data-binary @note.json
+{"author":"alice","body":"&lt;img src=x onerror=alert(2)&gt;","created_at":"2026-10-20T04:40:27+00:00","id":5,"title":"&lt;script&gt;alert(1)&lt;/script&gt;"}
+{"author":"alice","body":"&lt;img src=x onerror=alert(2)&gt;","created_at":"2026-10-20T04:40:27+00:00","id":5,"title":"&lt;script&gt;alert(1)&lt;/script&gt;"}
+
+==============================================================================
+8. Request with a garbage token -> 401
+==============================================================================
+$ curl -s -H Authorization:Bearer_not.a.jwt http://127.0.0.1:5001/api/data
+{"error":{"code":"invalid_token","message":"The access token is not valid."}}
+
+HTTP 401
+
+==============================================================================
+9. Security headers on a response
+==============================================================================
+$ curl -s -I http://127.0.0.1:5001/health
+HTTP/1.1 200 OK
+Server: Werkzeug/3.1.9 Python/3.11.5
+Date: Tue, 20 Oct 2026 04:40:27 GMT
+Content-Type: application/json
+Content-Length: 16
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'
+Connection: close

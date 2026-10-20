@@ -1,0 +1,99 @@
+name: CI
+
+# Runs on every push and every pull request, as the assignment requires.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run unit and security tests
+        run: pytest -q --junitxml=reports/junit.xml
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report
+          path: reports/junit.xml
+          if-no-files-found: warn
+
+  sast:
+    name: SAST (bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install bandit
+        run: pip install "bandit[toml]"
+
+      - name: Run bandit (fails the job on medium or higher)
+        run: |
+          mkdir -p reports
+          bandit -r app -x tests -ll \
+            -f json -o reports/bandit.json || true
+          # No "|| true" here: a medium/high finding turns the job red.
+          bandit -r app -x tests -ll -f txt -o reports/bandit.txt
+
+      - name: Upload SAST report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: reports/bandit.*
+          if-no-files-found: warn
+
+  sca:
+    name: SCA (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pip-audit
+        run: pip install "pip-audit"
+
+      - name: Audit dependencies for known CVEs
+        run: |
+          mkdir -p reports
+          pip-audit -r requirements.txt --format json --output reports/pip-audit.json
+          pip-audit -r requirements.txt --desc
+
+      - name: Upload SCA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: reports/pip-audit.json
+          if-no-files-found: warn

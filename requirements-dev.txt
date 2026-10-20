@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Test + security tooling (used locally and in the CI pipeline).
+pytest>=8,<10
+bandit>=1.7,<2
+pip-audit>=2.7,<3
