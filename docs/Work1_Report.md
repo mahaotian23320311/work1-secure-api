@@ -252,6 +252,10 @@ uid=1(daemon) gid=1(daemon) groups=1(daemon)
 `echo;` terminates the CGI response headers so that `id` output is visible in
 the body.
 
+Both attacks were executed against the running container on this machine; the
+exact status lines, `Server: Apache/2.4.49` headers and bodies are stored in
+`reports/cve-41773-phase1.log`.
+
 `[[SCREENSHOT: terminal – curl traversal returning root:x:0:0]]`
 
 `[[SCREENSHOT: terminal – curl CGI returning uid=1(daemon)]]`
@@ -335,11 +339,13 @@ Same commands, rebuilt environment:
 $ cd vulnerability/fixed && docker compose up --build -d
 
 $ curl --path-as-is -i 'http://127.0.0.1:8080/icons/.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd'
-HTTP/1.1 403 Forbidden
+HTTP/1.1 400 Bad Request
+Server: Apache/2.4.51 (Unix)
 # body contains no root:x:0:0
 
 $ curl --path-as-is -i --data 'echo;id' 'http://127.0.0.1:8080/cgi-bin/.%2e/.%2e/.%2e/.%2e/bin/sh'
-HTTP/1.1 403 Forbidden
+HTTP/1.1 400 Bad Request
+Server: Apache/2.4.51 (Unix)
 # body contains no uid=
 ```
 
@@ -348,23 +354,59 @@ Regression test — the service must still work:
 ```
 $ curl -s -i http://127.0.0.1:8080/
 HTTP/1.1 200 OK
-It works!
+<html><body><h1>It works!</h1></body></html>
 ```
 
-Automated verdict (`vulnerability/run_demo.ps1 -Phase all`):
+### 9.1 The three scenarios, measured
+
+To show that the patch and the hardening are two *different* controls, the
+vulnerable 2.4.49 binary was also run with its default (secure) configuration,
+i.e. the code is still vulnerable but `Require all denied` and no CGI.
+
+| Scenario (`Server` header) | Traversal → `/etc/passwd` | CGI execution | `GET /` |
+| --- | --- | --- | --- |
+| 2.4.49 + Vulhub config (`Apache/2.4.49`) | **200**, `root:x:0:0:root:/root:/bin/bash` | **200**, `uid=1(daemon) gid=1(daemon)` | 200 |
+| 2.4.49 + default config (`Apache/2.4.49`) | **403 Forbidden** | **403 Forbidden** | 200 |
+| 2.4.51 + hardening (`Apache/2.4.51`) | **400 Bad Request** | **400 Bad Request** | 200 |
+
+Reading the table:
+
+* row 1 is the vulnerability;
+* row 2 is the *configuration* layer alone — the vulnerable code is present,
+  the attack still fails, so the fix cannot rely on the version bump being
+  applied correctly everywhere;
+* row 3 is the *patch* — the request now dies inside the normaliser (400)
+  before authorisation, which is what a genuine code fix looks like. A 403
+  would mean "the router still resolved it and authorisation caught it".
+
+Automated verdict (`vulnerability/run_demo.ps1 -Phase all`), one run per phase:
 
 ```
-VERDICT: file disclosure = SUCCESS (vulnerable as expected)
-VERDICT: command execution = SUCCESS (vulnerable as expected)
+PHASE 1: Apache 2.4.49 + Vulhub config
+VERDICT: file disclosure = SUCCESS (vulnerable, as expected)
+VERDICT: command execution = SUCCESS (vulnerable, as expected)
 Result: PASS - vulnerability reproduced
 
+PHASE 2: Apache 2.4.49 (still vulnerable code) + default hardening
 VERDICT: traversal blocked = True
-VERDICT: RCE blocked = True
+VERDICT: command execution blocked = True
+VERDICT: normal functionality intact = True
+Result: PASS - vulnerability eliminated
+
+PHASE 3: Apache 2.4.51 + hardening
+VERDICT: traversal blocked = True
+VERDICT: command execution blocked = True
 VERDICT: normal functionality intact = True
 Result: PASS - vulnerability eliminated
 ```
 
-`[[SCREENSHOT: fixed environment – both attacks return 403, / still 200]]`
+Raw transcripts: `reports/cve-41773-all.log`,
+`reports/cve-41773-phase1.log`, `reports/cve-41773-hardened-config.log`,
+`reports/cve-41773-phase2.log`.
+
+`[[SCREENSHOT: fixed environment – both attacks return 400, / still 200]]`
+
+`[[SCREENSHOT: hardened 2.4.49 – both attacks return 403, / still 200]]`
 
 ---
 
