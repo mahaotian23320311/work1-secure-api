@@ -9,8 +9,8 @@
 | **HDU number (student ID)** | `____________________` |
 | **Group** | `________` |
 | **Date** | `____ / ____ / 2026` |
-| **Repository** | `https://github.com/<user>/work1-secure-api` |
-| **Last successful pipeline** | `https://github.com/<user>/work1-secure-api/actions/runs/<id>` |
+| **Repository** | `https://github.com/mahaotian23320311/work1-secure-api` |
+| **Last successful pipeline** | `https://github.com/mahaotian23320311/work1-secure-api/actions/runs/<id>` |
 
 ---
 

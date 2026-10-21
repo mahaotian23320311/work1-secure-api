@@ -104,8 +104,8 @@ def title_page(doc: Document) -> None:
     table.columns[1].width = Cm(7.5)
 
     doc.add_paragraph()
-    line("Repository: https://github.com/<user>/work1-secure-api", 10, space_after=2)
-    line("Pipeline:   https://github.com/<user>/work1-secure-api/actions", 10)
+    line("Repository: https://github.com/mahaotian23320311/work1-secure-api", 10, space_after=2)
+    line("Pipeline:   https://github.com/mahaotian23320311/work1-secure-api/actions", 10)
 
     doc.add_page_break()
 

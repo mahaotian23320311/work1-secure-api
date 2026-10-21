@@ -28,7 +28,7 @@ pip-audit, GitHub Actions, Docker Compose + Vulhub.
 ## 2. Quick start
 
 ```bash
-git clone <this-repository>
+git clone https://github.com/mahaotian23320311/work1-secure-api.git
 cd work1-secure-api
 
 python -m venv .venv
