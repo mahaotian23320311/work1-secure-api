@@ -42,20 +42,23 @@ def shade(paragraph, hex_fill: str = "F2F2F2") -> None:
 
 
 def add_runs(paragraph, text: str, *, size: float, mono: bool = False) -> None:
-    """Render **bold** and `code` spans inside one paragraph."""
-    pattern = re.compile(r"(\*\*.+?\*\*|`[^`]+`)")
+    """Render **bold**, *italic* and `code` spans inside one paragraph."""
+    pattern = re.compile(r"(\*\*.+?\*\*|`[^`]+`|(?<![*\w])\*[^*\n]+?\*(?![*\w]))")
     for chunk in pattern.split(text):
         if not chunk:
             continue
-        if chunk.startswith("**") and chunk.endswith("**"):
+        if chunk.startswith("**") and chunk.endswith("**") and len(chunk) > 4:
             run = paragraph.add_run(chunk[2:-2])
             run.bold = True
-        elif chunk.startswith("`") and chunk.endswith("`"):
+        elif chunk.startswith("`") and chunk.endswith("`") and len(chunk) > 2:
             run = paragraph.add_run(chunk[1:-1])
             run.font.name = MONO_FONT
             run._element.rPr.rFonts.set(qn("w:eastAsia"), MONO_FONT)
             run.font.size = Pt(size - 1)
             continue
+        elif chunk.startswith("*") and chunk.endswith("*") and len(chunk) > 2:
+            run = paragraph.add_run(chunk[1:-1])
+            run.italic = True
         else:
             run = paragraph.add_run(chunk)
         run.font.size = Pt(size)
@@ -86,17 +89,19 @@ def title_page(doc: Document) -> None:
     table = doc.add_table(rows=5, cols=2)
     table.style = "Table Grid"
     rows = [
-        ("Variant No.", "________________"),
-        ("Student (Surname, Name)", "________________"),
-        ("HDU number (student ID)", "________________"),
-        ("Group", "________________"),
-        ("Date", "____ / ____ / 2026"),
+        ("Variant No.", "____________"),
+        ("Student (Surname, Name)", "____________"),
+        ("HDU number (student ID)", "____________"),
+        ("Group", "____________"),
+        ("Date", "______ / ______ / 2026"),
     ]
     for row, (label, value) in zip(table.rows, rows):
         row.cells[0].text = label
         row.cells[1].text = value
-        for cell in row.cells:
+        for index, cell in enumerate(row.cells):
             for paragraph in cell.paragraphs:
+                if index == 1:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 for run in paragraph.runs:
                     run.font.size = Pt(11)
                     run.font.name = BODY_FONT
@@ -113,8 +118,22 @@ def title_page(doc: Document) -> None:
 # --------------------------------------------------------------------------- #
 # markdown -> docx
 # --------------------------------------------------------------------------- #
+def _join_continuations(lines: list[str]) -> list[str]:
+    """Fold indented continuation lines into the list item they belong to."""
+    out: list[str] = []
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if line.startswith(" ") and stripped and not stripped.startswith(("|", "```")):
+            if out and re.match(r"^([-*]|\d+\.)\s", out[-1].strip()):
+                out[-1] = out[-1].strip() + " " + stripped
+                continue
+        out.append(line)
+    return out
+
+
 def convert(md: str, doc: Document) -> None:
-    lines = md.splitlines()
+    lines = _join_continuations(md.splitlines())
 
     # Skip the Markdown title page; the docx has its own.
     try:
@@ -122,15 +141,34 @@ def convert(md: str, doc: Document) -> None:
     except StopIteration:
         start = 0
 
+    buffer: list[str] = []
+
+    def flush() -> None:
+        """Emit the accumulated lines as one wrapped paragraph."""
+        if not buffer:
+            return
+        paragraph = doc.add_paragraph()
+        paragraph.paragraph_format.space_after = Pt(6)
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        add_runs(paragraph, " ".join(buffer), size=11)
+        buffer.clear()
+
     i = start
     while i < len(lines):
         line = lines[i].rstrip()
 
-        if not line:
+        # Placeholders may be written as `[[SCREENSHOT: ...]]`; unwrap them so
+        # they render as a grey note instead of inline code.
+        if re.fullmatch(r"`\[\[SCREENSHOT:.*\]\]`", line.strip()):
+            line = line.strip().strip("`")
+
+        if not line.strip():
+            flush()
             i += 1
             continue
 
         if line.startswith("```"):
+            flush()
             i += 1
             block: list[str] = []
             while i < len(lines) and not lines[i].startswith("```"):
@@ -149,6 +187,7 @@ def convert(md: str, doc: Document) -> None:
             continue
 
         if line.startswith("|"):
+            flush()
             rows: list[list[str]] = []
             while i < len(lines) and lines[i].startswith("|"):
                 cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
@@ -162,6 +201,8 @@ def convert(md: str, doc: Document) -> None:
                     cell = table.cell(r, c)
                     cell.text = ""
                     paragraph = cell.paragraphs[0]
+                    paragraph.paragraph_format.space_after = Pt(2)
+                    paragraph.paragraph_format.space_before = Pt(2)
                     add_runs(paragraph, text, size=9)
                     if r == 0:
                         for run in paragraph.runs:
@@ -170,6 +211,7 @@ def convert(md: str, doc: Document) -> None:
             continue
 
         if line.startswith("#"):
+            flush()
             level = len(line) - len(line.lstrip("#"))
             text = line[level:].strip()
             heading = doc.add_heading(level=min(level, 3) - 1, text=text)
@@ -181,6 +223,7 @@ def convert(md: str, doc: Document) -> None:
             continue
 
         if re.match(r"^[-*] ", line):
+            flush()
             p = doc.add_paragraph(style="List Bullet")
             add_runs(p, line[2:].strip(), size=11)
             p.paragraph_format.space_after = Pt(2)
@@ -188,14 +231,18 @@ def convert(md: str, doc: Document) -> None:
             continue
 
         if re.match(r"^\d+\. ", line):
-            text = re.sub(r"^\d+\. ", "", line).strip()
-            p = doc.add_paragraph(style="List Number")
-            add_runs(p, text, size=11)
+            flush()
+            match = re.match(r"^(\d+)\.\s+(.*)$", line.strip())
+            p = doc.add_paragraph()
+            p.paragraph_format.left_indent = Cm(0.75)
+            p.paragraph_format.first_line_indent = Cm(-0.75)
             p.paragraph_format.space_after = Pt(2)
+            add_runs(p, match.group(1) + ".\t" + match.group(2), size=11)
             i += 1
             continue
 
         if line.startswith("[[SCREENSHOT:"):
+            flush()
             p = doc.add_paragraph()
             run = p.add_run(line.strip("[]").replace("SCREENSHOT:", "Screenshot:"))
             run.italic = True
@@ -205,14 +252,14 @@ def convert(md: str, doc: Document) -> None:
             continue
 
         if line.strip() == "---":
+            flush()
             i += 1
             continue
 
-        p = doc.add_paragraph()
-        p.paragraph_format.space_after = Pt(6)
-        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        add_runs(p, line.strip(), size=11)
+        buffer.append(line.strip())
         i += 1
+
+    flush()
 
 
 def main() -> None:
@@ -230,6 +277,8 @@ def main() -> None:
     style.font.name = BODY_FONT
     style.font.size = Pt(11)
     style.element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+    style.paragraph_format.line_spacing = 1.0
+    style.paragraph_format.space_after = Pt(6)
 
     title_page(doc)
     convert(SOURCE.read_text(encoding="utf-8"), doc)

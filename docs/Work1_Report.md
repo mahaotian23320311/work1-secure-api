@@ -448,10 +448,11 @@ fixed this CVE and still fell to a sandbox escape a year later
 7. **Why regression testing after a patch.** A patch changes behaviour, and a
    security fix that disables the feature is not a fix. Here, a perfectly
    "secure" answer would be to block the whole service; the regression check
-   (`GET /` still returns 200) proves the legitimate path still works.
+   (the same document is still searchable after the fix) proves the legitimate
+   path still works.
 8. **Why reproduce CVEs as a specialist.** A pentester needs to know what a
    working exploit looks like in order to judge whether a target is really
    affected, and a SOC analyst needs the same knowledge to recognise the
    traffic in logs. Reproduction turns a CVE description into a concrete
-   signature: the `.%2e` pattern in a URL is trivial to grep for once you have
-   seen it.
+   signature: a search request carrying `script_fields` is trivial to spot in a
+   proxy log once you have seen it.
