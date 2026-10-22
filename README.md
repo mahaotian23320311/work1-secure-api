@@ -339,8 +339,8 @@ document is still searchable — the regression check proves the remediation did
 not break the service.
 
 A nuance worth keeping: **1.4.4 is not the end of the story.** It fixed this
-CVE, but in 2015 the 1.4.x sandbox was bypassed again (CVE-2015-1427, Groovy
-sandbox escape), and 1.4.4 is still inside that affected range. That is why the
+CVE, but the sandbox introduced in 1.4 was itself bypassed within a year
+(CVE-2015-1427, Groovy sandbox escape, fixed in 1.4.3). That is why the
 strongest layer above is the design one: "no client-supplied scripts" survives
 the next clever expression, while a sandbox has to be perfect every time.
 

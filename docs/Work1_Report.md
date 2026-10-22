@@ -52,6 +52,10 @@ pipeline, and a reproducible analysis of **CVE-2014-3120** in Elasticsearch
 | GET | `/api/me` | Bearer JWT | current user profile |
 | GET | `/health` | no | liveness probe |
 
+The three methods required by the assignment are `POST /auth/login`,
+`GET /api/data` (authentication enforced) and the self-chosen `POST /api/notes`;
+the rest are supporting endpoints.
+
 Example session:
 
 ```
@@ -166,7 +170,7 @@ an expired token, an `alg: none` token, and a token signed with a different key
 | `sca` | pip-audit | any known-vulnerable dependency fails the run |
 
 Reports are uploaded as build artifacts (`bandit-report`, `pip-audit-report`,
-`pytest-report`), which is what the assignment asks to screenshot.
+`pytest-report`) and can be downloaded from the run page under **Artifacts**.
 
 Result of run #8 (the same commands, executed by the pipeline; the bandit
 step prints its report to the log so the result is visible without downloading
@@ -210,7 +214,7 @@ script, and the node compiles and evaluates it inside its own JVM. Before 1.2
 the default configuration allowed this for **every** request, with no sandbox
 and no authentication, so one unauthenticated `POST /_search` containing
 `java.lang.Runtime.getRuntime().exec(...)` runs a command as the user that
-started the node — root, in the official image.
+started the node — root, in this image.
 
 The Vulhub environment for this CVE is exactly that default: a single
 `vulhub/elasticsearch:1.1.1` container on port 9200.
@@ -322,12 +326,11 @@ FROM vulhub/elasticsearch:1.4.4
 
 Why this is effective: layer 1 removes the primitive ("compile what the client
 sent"), layer 2 removes it by default and adds a sandbox, layer 3 removes it from
-the reachable surface. A nuance worth stating in the report: **1.4.4 is not the
-end of the story** — in 2015 the 1.4.x sandbox was bypassed again
-(CVE-2015-1427, Groovy sandbox escape) and 1.4.4 is still in that affected
-range. That is precisely why the design layer is the durable one: "no
-client-supplied scripts" survives the next clever expression, while a sandbox
-has to be perfect every time.
+the reachable surface. One nuance worth keeping in mind: **1.4.4 is not the end
+of the story** — the sandbox introduced in 1.4 was itself bypassed within a year
+(CVE-2015-1427, Groovy sandbox escape, fixed in 1.4.3). That is precisely why
+the design layer is the durable one: "no client-supplied scripts" survives the
+next clever expression, while a sandbox has to be perfect every time.
 
 ---
 
@@ -355,7 +358,7 @@ capability is switched off.
 
 | Scenario (`version.number`) | Attack response | `/tmp/pwned.txt` | Normal search |
 | --- | --- | --- | --- |
-| `vulnerable/` — 1.1.1, scripting on | **200**, `pwn: ["java.lang.UNIXProcess@…"]` | **`uid=0(root)`** | 1 hit |
+| `vulnerable/` — 1.1.1, scripting on | **200**, `pwn: ["java.lang.UNIXProcess@…"]` | **uid=0(root)** | 1 hit |
 | `hardened/` — 1.1.1 + `script.disable_dynamic` | **400**, `dynamic scripting disabled` | absent | 1 hit |
 | `fixed/` — 1.4.4 | **400**, `dynamic scripting for [groovy] disabled` | absent | 1 hit |
 
@@ -409,8 +412,8 @@ Elasticsearch 1.1.1 had a check — the request had to be well-formed JSON — b
 treated *code* as ordinary data, so the check was irrelevant. A capability that
 lets a client run code is not something a filter can make safe; it has to be
 removed from the reachable surface, or at minimum switched off by default. The
-same reasoning explains why the upgrade alone is not the whole answer: 1.4.4
-fixed this CVE and still fell to a sandbox escape a year later
+same reasoning explains why the upgrade alone is not the whole answer: 1.4.3–1.4.4
+closed this CVE, yet the sandbox they introduced was bypassed again shortly after
 (CVE-2015-1427), while "no client-supplied scripts" would have prevented both.
 
 ---

@@ -109,7 +109,7 @@ def title_page(doc: Document) -> None:
 
     doc.add_paragraph()
     line("Repository: https://github.com/mahaotian23320311/work1-secure-api", 10, space_after=2)
-    line("Pipeline:   https://github.com/mahaotian23320311/work1-secure-api/actions", 10)
+    line("Pipeline:   https://github.com/mahaotian23320311/work1-secure-api/actions/runs/39714222548", 9)
 
     doc.add_page_break()
 
@@ -193,6 +193,10 @@ def convert(md: str, doc: Document) -> None:
                 if not all(re.fullmatch(r":?-{2,}:?", c) for c in cells):
                     rows.append(cells)
                 i += 1
+            # A table written as "| | |" has an empty header row; drop it so the
+            # Word table does not start with a blank line.
+            if rows and all(cell == "" for cell in rows[0]):
+                rows = rows[1:]
             table = doc.add_table(rows=len(rows), cols=len(rows[0]))
             table.style = "Table Grid"
             for r, cells in enumerate(rows):
