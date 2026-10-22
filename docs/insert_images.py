@@ -22,9 +22,9 @@ ROOT_COPY = r"D:\[HDU-CS4-26-27-1] Information Security\work1\Work1_Report.docx"
 # order of the placeholders in the document
 IMAGES = [
     ("01-api-smoke-test.png", "Figure 1 - API smoke test: 401 without a token, 401 on a wrong password, 200 with a valid JWT"),
-    ("02-actions-overview.png", "Figure 2 - GitHub Actions: run #6 finished successfully, all three jobs green"),
-    ("03-sast-bandit.png", "Figure 3 - SAST: bandit reports no issues (503 lines scanned)"),
-    ("04-sca-pip-audit.png", "Figure 4 - SCA: pip-audit reports no known vulnerabilities"),
+    ("02-actions-overview.png", "Figure 2 - GitHub Actions run #8: success, all three jobs green (Tests 17s, SAST 11s, SCA 25s)"),
+    ("03-sast-bandit.png", "Figure 3 - GitHub Actions SAST job log: bandit reports no issues, 503 lines scanned"),
+    ("04-sca-pip-audit.png", "Figure 4 - GitHub Actions SCA job log: pip-audit reports no known vulnerabilities"),
     ("05-cve-vulnerable.png", "Figure 5 - CVE-2014-3120 reproduced on 1.1.1: the script runs, id is root"),
     ("06-default-config.png", "Figure 6 - the default 1.1.1 config has no script.disable_dynamic, so scripting is on"),
     ("07-fixed.png", "Figure 7 - 1.4.4 rejects the script (dynamic scripting for [groovy] disabled)"),

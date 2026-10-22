@@ -168,7 +168,9 @@ an expired token, an `alg: none` token, and a token signed with a different key
 Reports are uploaded as build artifacts (`bandit-report`, `pip-audit-report`,
 `pytest-report`), which is what the assignment asks to screenshot.
 
-Local run of the same three commands:
+Result of run #8 (the same commands, executed by the pipeline; the bandit
+step prints its report to the log so the result is visible without downloading
+the artifact):
 
 ```
 $ pytest -q
