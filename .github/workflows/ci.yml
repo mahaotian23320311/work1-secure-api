@@ -61,6 +61,8 @@ jobs:
             -f json -o reports/bandit.json || true
           # No "|| true" here: a medium/high finding turns the job red.
           bandit -r app -x tests -ll -f txt -o reports/bandit.txt
+          echo "----- reports/bandit.txt -----"
+          cat reports/bandit.txt
 
       - name: Upload SAST report
         if: always()
