@@ -86,13 +86,12 @@ def title_page(doc: Document) -> None:
     line("Secure REST API Development with CI/CD", 14, bold=True, space_after=2)
     line("and Real CVE Vulnerability Analysis", 14, bold=True, space_after=60)
 
-    table = doc.add_table(rows=5, cols=2)
+    table = doc.add_table(rows=4, cols=2)
     table.style = "Table Grid"
     rows = [
         ("Variant No.", "____________"),
         ("Student (Surname, Name)", "____________"),
         ("HDU number (student ID)", "____________"),
-        ("Group", "____________"),
         ("Date", "______ / ______ / 2026"),
     ]
     for row, (label, value) in zip(table.rows, rows):
