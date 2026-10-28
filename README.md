@@ -216,11 +216,22 @@ bandit:     No issues identified.  (Total lines of code: 503)
 pip-audit:  No known vulnerabilities found
 ```
 
-**Screenshots to attach** (open *Actions → latest run → job → step*):
-1. The green run overview with all three jobs.
-2. `sast` job log showing `No issues identified`.
-3. `sca` job log showing `No known vulnerabilities found`.
-4. Artifacts section with `bandit-report` and `pip-audit-report`.
+### Evidence from the Actions tab
+
+The three jobs on the captured run (all green, 3 artifacts):
+
+![Actions run: Tests, SAST and SCA all successful](docs/screenshots/02-actions-overview.png)
+
+The SAST job log - bandit reports no issues at `-ll`:
+
+![SAST job: bandit - No issues identified](docs/screenshots/03-sast-bandit.png)
+
+The SCA job log - pip-audit reports no known vulnerabilities:
+
+![SCA job: pip-audit - No known vulnerabilities found](docs/screenshots/04-sca-pip-audit.png)
+
+The same three checks can be reproduced locally (`reports/` holds the output):
+`pytest` 25 passed, `bandit` no issues, `pip-audit` no known vulnerabilities.
 
 ---
 
@@ -267,6 +278,8 @@ container:
 docker compose exec -T es cat /tmp/pwned.txt
 # uid=0(root) gid=0(root) groups=0(root)
 ```
+
+![Vulnerable 1.1.1: the request runs a shell command as root](docs/screenshots/05-cve-vulnerable.png)
 
 `vulnerability/run_demo.ps1 -Phase all` automates all three scenarios, asserts
 the expected outcome of each and writes `reports/cve-2014-3120-all.log`.
@@ -328,11 +341,18 @@ FROM vulhub/elasticsearch:1.4.4
 
 ### Measured result
 
+The same request against the fixed image - the script no longer runs:
+
+![Fixed 1.4.4: the script is rejected](docs/screenshots/07-fixed.png)
+
+
 | Scenario | `version.number` | Attack | `/tmp/pwned.txt` | Normal search |
 | --- | --- | --- | --- | --- |
 | `vulnerable/` — dynamic scripting on | 1.1.1 | **200**, `java.lang.UNIXProcess@…` | **`uid=0(root)`** | 1 hit |
 | `hardened/` — `script.disable_dynamic: true` | 1.1.1 | **400**, `dynamic scripting disabled` | absent | 1 hit |
 | `fixed/` — upgraded | 1.4.4 | **400**, `dynamic scripting for [groovy] disabled` | absent | 1 hit |
+
+![Hardened 1.1.1: the same request is refused](docs/screenshots/08-hardened.png)
 
 After the fix the attack is rejected, nothing is executed, and the same
 document is still searchable — the regression check proves the remediation did
